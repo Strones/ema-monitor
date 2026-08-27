@@ -3,9 +3,8 @@ const cheerio = require('cheerio');
 const fs = require('fs');
 
 const CONFIG = {
-  // Broad search URL on EMA for daraxonrasib
-  url: 'https://www.ema.europa.eu/en/medicines/field_ema_web_categories%253Ahuman/search_api_datasource_ema_human_medicines_search?search_api_fulltext=daraxonrasib',
-  fallbackUrl: 'https://www.ema.europa.eu/en/homepage',
+  // Using DuckDuckGo HTML search API as a reliable proxy to monitor EMA for daraxonrasib without hitting EMA bot-blocks or strict search parameter routing
+  url: 'https://html.duckduckgo.com/html/?q=site:ema.europa.eu+daraxonrasib',
   keyword: 'daraxonrasib',
   stateFile: './last_state.json',
 };
@@ -27,7 +26,7 @@ async function sendTelegramMessage(text) {
 }
 
 async function checkEMA() {
-  console.log(`Checking EMA search for ${CONFIG.keyword} at ${new Date().toISOString()}`);
+  console.log(`Checking search index for ${CONFIG.keyword} at ${new Date().toISOString()}`);
   
   let response;
   try {
@@ -48,8 +47,7 @@ async function checkEMA() {
   const $ = cheerio.load(html);
   const bodyText = $('body').text().toLowerCase();
 
-  // Check if keyword exists and isn't just a "no results found" message mentioning the search term
-  const found = bodyText.includes(CONFIG.keyword.toLowerCase()) && !bodyText.includes('no results found');
+  const found = bodyText.includes(CONFIG.keyword.toLowerCase()) && !bodyText.includes('no results');
 
   let lastState = { exists: false };
   if (fs.existsSync(CONFIG.stateFile)) {
@@ -57,9 +55,9 @@ async function checkEMA() {
   }
 
   if (found && !lastState.exists) {
-    console.log('TRIGGER: Keyword found for the first time in search results!');
+    console.log('TRIGGER: Keyword found in search index!');
     await sendTelegramMessage(
-      `🚨 *EMA Approval Alert: Daraxonrasib detected!*\n\nDaraxonrasib appeared on the EMA search results:\n${CONFIG.url}`
+      `🚨 *EMA Approval Alert: Daraxonrasib detected!*\n\nDaraxonrasib appeared in EMA search indices:\nhttps://www.ema.europa.eu/en/medicines/human/summaries-opinion/daraxonrasib`
     );
   } else {
     console.log('No new status change detected.');
@@ -74,33 +72,36 @@ async function handleCommands() {
   if (!token || !chatId) return;
 
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
+    // Note: getUpdates clears old messages unless offset is managed, 
+    // but to keep it simple we fetch the latest updates.
+    const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?allowed_updates=["message"]`);
     const data = await res.json();
     if (!data.ok || !data.result) return;
 
-    const messages = data.result
-      .filter(u => u.message && u.message.chat && u.message.chat.id.toString() === chatId.toString())
-      .map(u => u.message);
+    for (const update of data.result) {
+      if (!update.message || !update.message.text) continue;
+      const msgChatId = update.message.chat.id.toString();
+      if (msgChatId !== chatId.toString()) continue;
 
-    if (messages.length === 0) return;
-    const latestMessage = messages[messages.length - 1];
-    const text = (latestMessage.text || '').trim().toLowerCase();
+      const text = update.message.text.trim().toLowerCase();
+      const now = Math.floor(Date.now() / 1000);
+      
+      // Ignore messages older than 1 hour
+      if (now - update.message.date > 3600) continue;
 
-    const now = Math.floor(Date.now() / 1000);
-    if (now - latestMessage.date > 1800) return;
-
-    if (text === '/status' || text === 'status') {
-      let lastState = { exists: false };
-      if (fs.existsSync(CONFIG.stateFile)) {
-        lastState = JSON.parse(fs.readFileSync(CONFIG.stateFile, 'utf8'));
+      if (text === '/status' || text === 'status') {
+        let lastState = { exists: false };
+        if (fs.existsSync(CONFIG.stateFile)) {
+          lastState = JSON.parse(fs.readFileSync(CONFIG.stateFile, 'utf8'));
+        }
+        await sendTelegramMessage(`🤖 *Monitor Status*\n- Target: Daraxonrasib\n- Detected in index: \`${lastState.exists}\``);
+      } else if (text === '/check' || text === 'check') {
+        const html = await (await fetch(CONFIG.url, { headers: { 'User-Agent': 'Mozilla/5.0' } })).text();
+        const found = html.toLowerCase().includes(CONFIG.keyword.toLowerCase());
+        await sendTelegramMessage(`🔍 *Manual Check Result*\nDaraxonrasib in search index right now: \`${found}\``);
+      } else if (text === '/help' || text === 'help') {
+        await sendTelegramMessage(`📋 *Available Commands*\n- /status : View current monitor state\n- /check : Perform instant check right now`);
       }
-      await sendTelegramMessage(`🤖 *Monitor Status*\n- Target: Daraxonrasib\n- Detected in EMA search: \`${lastState.exists}\`\n- URL: ${CONFIG.url}`);
-    } else if (text === '/check' || text === 'check') {
-      const html = await (await fetch(CONFIG.url, { headers: { 'User-Agent': 'Mozilla/5.0' } })).text();
-      const found = html.toLowerCase().includes(CONFIG.keyword.toLowerCase()) && !html.toLowerCase().includes('no results found');
-      await sendTelegramMessage(`🔍 *Manual Check Result*\nDaraxonrasib in EMA search right now: \`${found}\``);
-    } else if (text === '/help' || text === 'help') {
-      await sendTelegramMessage(`📋 *Available Commands*\n- /status : View current monitor state\n- /check : Perform instant check right now`);
     }
   } catch (err) {
     console.error('Error handling commands:', err);
