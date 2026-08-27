@@ -9,7 +9,6 @@ jobs:
   run-monitor:
     runs-on: ubuntu-latest
     
-    # Grant permissions to allow GitHub Actions to commit and push state/offset changes back to the repo
     permissions:
       contents: write
 
@@ -20,7 +19,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm install
