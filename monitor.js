@@ -1,6 +1,5 @@
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
-const nodemailer = require('nodemailer');
 const fs = require('fs');
 
 const CONFIG = {
@@ -9,24 +8,33 @@ const CONFIG = {
   stateFile: './last_state.json',
 };
 
-async function sendEmail(subject, text) {
-  let transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 465,
-    secure: true,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
-    }
+async function sendTelegramMessage(text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (!token || !chatId) {
+    console.error('Telegram bot token or chat ID is missing!');
+    return;
+  }
+
+  const telegramUrl = `https://api.telegram.org/bot${token}/sendMessage`;
+  
+  const response = await fetch(telegramUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: text,
+      disable_web_page_preview: false
+    })
   });
 
-  await transporter.sendMail({
-    from: `"EMA Monitor" <${process.env.SMTP_USER}>`,
-    to: process.env.TO_EMAIL,
-    subject: subject,
-    text: text
-  });
-  console.log('Alert email sent successfully!');
+  const data = await response.json();
+  if (data.ok) {
+    console.log('Telegram alert sent successfully!');
+  } else {
+    console.error('Failed to send Telegram message:', data);
+  }
 }
 
 async function checkEMA() {
@@ -60,9 +68,8 @@ async function checkEMA() {
 
   if (found && !lastState.exists) {
     console.log('TRIGGER: Keyword found for the first time!');
-    await sendEmail(
-      '🚨 EMA Approval Alert: Daraxonrasib detected!',
-      `Daraxonrasib was detected on the EMA page:\n\n${CONFIG.url}`
+    await sendTelegramMessage(
+      `🚨 *EMA Approval Alert: Daraxonrasib detected!*\n\nDaraxonrasib was detected on the EMA page:\n${CONFIG.url}`
     );
   } else {
     console.log('No new status change detected.');
